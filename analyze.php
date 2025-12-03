@@ -14,6 +14,7 @@ $totalPlayTimeMs = 0;
 
 // ファイルがアップロードされたか確認
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['json_files'])) {
+    require_once 'JsonStreamer.php';
     $files = $_FILES['json_files'];
     $fileCount = count($files['name']);
 
@@ -24,23 +25,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['json_files'])) {
         }
 
         $tmpName = $files['tmp_name'][$i];
-        $content = file_get_contents($tmpName);
-        $json = json_decode($content, true);
 
-        if (!is_array($json)) {
-            continue;
-        }
+        // Use streaming parser instead of loading entire file
+        foreach (JsonStreamer::streamJsonItems($tmpName) as $record) {
+            $msPlayed = 0;
+            $artist = '';
+            $track = '';
+            $endTime = '';
 
-        foreach ($json as $record) {
-            // 必要なキーがあるか確認
-            if (!isset($record['endTime'], $record['artistName'], $record['trackName'], $record['msPlayed'])) {
+            // Handle Standard History format
+            if (isset($record['endTime'], $record['artistName'], $record['trackName'], $record['msPlayed'])) {
+                $msPlayed = $record['msPlayed'];
+                $artist = $record['artistName'];
+                $track = $record['trackName'];
+                $endTime = $record['endTime'];
+            }
+            // Handle Extended History format
+            elseif (isset($record['ts'], $record['master_metadata_album_artist_name'], $record['master_metadata_track_name'], $record['ms_played'])) {
+                $msPlayed = $record['ms_played'];
+                $artist = $record['master_metadata_album_artist_name'];
+                $track = $record['master_metadata_track_name'];
+                // Convert ISO 8601 timestamp to "Y-m-d H:i" if needed, or just use Y-m for stats
+                // Extended history "ts" is usually "YYYY-MM-DDTHH:MM:SSZ"
+                $endTime = str_replace(['T', 'Z'], [' ', ''], $record['ts']);
+            } else {
                 continue;
             }
 
-            $msPlayed = $record['msPlayed'];
-            $artist = $record['artistName'];
-            $track = $record['trackName'];
-            $endTime = $record['endTime']; // "2023-11-26 15:30"
+            // Skip if data is missing (sometimes extended history has nulls)
+            if (empty($artist) || empty($track)) {
+                continue;
+            }
 
             // 総再生時間
             $totalPlayTimeMs += $msPlayed;
